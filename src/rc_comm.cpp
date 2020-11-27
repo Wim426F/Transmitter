@@ -124,15 +124,15 @@ int RadioCommunication::receive()
     {
       //receive_packet[i] = HC12.read();
       steer_correction = HC12.read();
-      //digitalWrite(led_red, LOW);
-      //digitalWrite(led_green, HIGH);
+      digitalWrite(led_red, LOW);
+      digitalWrite(led_green, HIGH);
     }
     return 1;
   }
   else
   {
-    //digitalWrite(led_green, LOW);
-    //digitalWrite(led_red, HIGH);
+    digitalWrite(led_green, LOW);
+    digitalWrite(led_red, HIGH);
     return 0;
   }
 }

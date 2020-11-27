@@ -1,2 +1,0 @@
-# Transmitter
-Transmitter for hexacopter

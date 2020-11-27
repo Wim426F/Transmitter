@@ -1,11 +1,12 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
-//#include <Arduino.h>
+#include <Arduino.h>
+#include <SoftwareSerial.h>
 #include <elapsedMillis.h>
 #include <LiquidCrystal_I2C.h>
 
-#define HC12 Serial1 
+extern SoftwareSerial HC12;
 extern LiquidCrystal_I2C lcd;
 
 extern uint8_t send_packet[];
@@ -35,7 +36,7 @@ extern uint8_t pot_pitch;
 extern uint8_t pot_roll;
 
 extern const uint8_t hc_set;
-//extern const uint8_t led_green;
-//extern const uint8_t led_red;
+extern const uint8_t led_green;
+extern const uint8_t led_red;
 
 #endif
