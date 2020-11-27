@@ -38,14 +38,14 @@ unsigned long last_millis = 0;
 const long long_press = 1000;
 
 const uint8_t hc_set = 2;
-const uint8_t led_green = 8;
-const uint8_t led_red = 7;
+//const uint8_t led_green = 8;
+//const uint8_t led_red = 7;
 
 //Buttons
-const uint8_t button1_pin = 9;
-const uint8_t button2_pin = 6;
-const uint8_t button3_pin = 0;
-const uint8_t button4_pin = 1;
+const uint8_t button1_pin = 27;
+const uint8_t button2_pin = 25;
+const uint8_t button3_pin = 34;
+const uint8_t button4_pin = 14;
 
 uint8_t button1 = 0;
 uint8_t button2 = 0;
@@ -53,10 +53,10 @@ uint8_t button3 = 0;
 uint8_t button4 = 0;
 
 //Joysticks
-const uint8_t pot_ay = A0;
-const uint8_t pot_ax = A1;
-const uint8_t pot_by = A3;
-const uint8_t pot_bx = A2;
+const uint8_t pot_ay = 36;
+const uint8_t pot_ax = 39;
+const uint8_t pot_by = 35;
+const uint8_t pot_bx = 33;
 
 uint8_t pot_throttle = 0;
 uint8_t pot_yaw = 0;
@@ -65,9 +65,10 @@ uint8_t pot_roll = 0;
 
 int on_press = 0;
 
-SoftwareSerial HC12(5, 3);          // to HC-12 TX Pin, to HC-12 RX Pin
+#define HC12 Serial1
 LiquidCrystal_I2C lcd(0x27, 20, 4); // Display  I2C 20 x 4
 RadioCommunication rc;
+#define EEPROM_SIZE 1
 
 int interface(int);
 void changeParam();
@@ -83,8 +84,10 @@ void setup()
   digitalWrite(hc_set, HIGH);
   lcd.init();
   lcd.backlight();
+  
   HC12.begin((rc_baudrate[baud_state]));
   //EEPROM.write(ch_state_adrr, 0);
+  EEPROM.begin(EEPROM_SIZE);
 }
 
 void loop()
@@ -162,40 +165,6 @@ void loop()
 
 int interface(int page)
 {
-  if (button1 == 0) // move cursor through parameters
-  {
-    delay(200);
-    move_vert += 1;
-    if (move_vert > 3)
-    {
-      move_vert = 1;
-    }
-  }
-
-  if (page == 0)
-  {
-    lcd.noCursor();
-    lcd.setCursor(0, 0);
-    lcd.print("AY:");
-    lcd.print(pot_throttle);
-    lcd.print("   ");
-    lcd.setCursor(0, 1);
-    lcd.print((String) "AX:" + pot_yaw + "   ");
-    lcd.setCursor(10, 0);
-    lcd.print((String) "BY:" + pot_pitch + "   ");
-    lcd.setCursor(10, 1);
-    lcd.print((String) "BX:" + pot_roll + "   ");
-    lcd.setCursor(0, 2);
-    lcd.print((String) "P1:" + button1);
-    lcd.setCursor(5, 2);
-    lcd.print((String) "P2:" + button2);
-    lcd.setCursor(10, 2);
-    lcd.print((String) "P3:" + button3);
-    lcd.setCursor(15, 2);
-    lcd.print((String) "P4:" + button4);
-    lcd.setCursor(0, 3);
-    lcd.print(steer_correction);
-  }
   if (page == 1)
   {
     changeParam();
@@ -209,19 +178,6 @@ int interface(int page)
     lcd.setCursor(0, 3);
     lcd.print((String) "Bd: " + (rc_baudrate[baud_state]) + "b/s      ");
     lcd.setCursor(4, move_vert);
-  }
-  if (page == 2)
-  {
-    lcd.cursor();
-    lcd.setCursor(0, 0);
-    lcd.print("Config: Drone");
-    lcd.setCursor(1, 0);
-  }
-  if (page == 2)
-  {
-    lcd.cursor();
-    lcd.setCursor(0, 0);
-    lcd.setCursor(1, 0);
   }
   return 0;
 }
