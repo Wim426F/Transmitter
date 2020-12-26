@@ -3,10 +3,9 @@
 
 #include <Arduino.h>
 #include <elapsedMillis.h>
-#include <LiquidCrystal_I2C.h>
 
-#define HC12 Serial1 
-extern LiquidCrystal_I2C lcd;
+#define hc12 Serial2 
+#define HC12_CMD_MODE GPIO_NUM_4
 
 extern uint8_t send_packet[];
 extern uint8_t receive_packet[];
@@ -20,22 +19,25 @@ extern uint8_t txpower_state;
 
 extern String set_channel;
 
-extern uint8_t steer_correction;
-
 //Buttons
-extern uint8_t button1;
-extern uint8_t button4;
-extern uint8_t button2;
-extern uint8_t button3;
+struct Button
+{
+  gpio_num_t PIN;
+  int state;
+  uint64_t since_press;
+};
+extern Button button1;
+extern Button button2;
+extern Button button3;
+extern Button button4;
 
 //Joysticks
-extern uint8_t pot_throttle;
-extern uint8_t pot_yaw;
-extern uint8_t pot_pitch;
-extern uint8_t pot_roll;
+extern uint16_t pot_throttle;
+extern uint16_t pot_yaw;
+extern uint16_t pot_pitch;
+extern uint16_t pot_roll;
 
-extern const uint8_t hc_set;
-//extern const uint8_t led_green;
-//extern const uint8_t led_red;
+//extern const uint8_t LED_GREEN;
+//extern const uint8_t LED_RED;
 
 #endif

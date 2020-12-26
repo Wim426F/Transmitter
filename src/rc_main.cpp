@@ -7,22 +7,11 @@
 #include <rc_comm.h>
 #include <globals.h>
 #include <EEPROM.h>
+#include <SD.h>
+#include <SPI.h>
 
-// interface variables
-uint8_t menu = 0;
-const uint8_t max_pages = 2;
-uint8_t on_pageload = 0;
-bool blink_cursor = true;
-uint8_t move_vert = 1;
-
-const uint8_t ch_state_adrr = 0;
-const uint8_t bd_state_adrr = 1;
-const uint8_t tp_state_adrr = 2;
-uint8_t channel_state = EEPROM.read(ch_state_adrr);
-uint8_t baud_state = EEPROM.read(bd_state_adrr);
-uint8_t txpower_state = EEPROM.read(tp_state_adrr);
-
-uint8_t steer_correction = 0;
+RadioCommunication rc;
+EEPROMClass flash;
 
 elapsedMillis since_int1;
 elapsedMillis since_int2;
@@ -33,104 +22,87 @@ const long interval2 = 50;
 const long interval3 = 3000;
 const long interval4 = 300;
 
-unsigned long current_millis = 0;
-unsigned long last_millis = 0;
-const long long_press = 1000;
+#define FLASH_SIZE 1
+#define CH_STATE_ADRR 0
+#define BD_STATE_ADRR 1
+#define TP_STATE_ADRR 2
+uint8_t channel_state = flash.read(CH_STATE_ADRR);
+uint8_t baud_state = flash.read(BD_STATE_ADRR);
+uint8_t txpower_state = flash.read(TP_STATE_ADRR);
 
-const uint8_t hc_set = 2;
-//const uint8_t led_green = 8;
-//const uint8_t led_red = 7;
+/* GPIO */
+#define LED_GREEN GPIO_NUM_2
+#define LED_RED GPIO_NUM_12
+#define HC12_TX GPIO_NUM_32
+#define HC12_RX GPIO_NUM_26
+#define HC12_CMD_MODE GPIO_NUM_4
 
-//Buttons
-const uint8_t button1_pin = 27;
-const uint8_t button2_pin = 25;
-const uint8_t button3_pin = 34;
-const uint8_t button4_pin = 14;
+#define POT_AY GPIO_NUM_39
+#define POT_AX GPIO_NUM_36
+#define POT_BY GPIO_NUM_33
+#define POT_BX GPIO_NUM_35
 
-uint8_t button1 = 0;
-uint8_t button2 = 0;
-uint8_t button3 = 0;
-uint8_t button4 = 0;
+Button button1 = {GPIO_NUM_27, false, 0};
+Button button2 = {GPIO_NUM_25, false, 0};
+Button button3 = {GPIO_NUM_34, false, 0};
+Button button4 = {GPIO_NUM_14, false, 0};
 
-//Joysticks
-const uint8_t pot_ay = 36;
-const uint8_t pot_ax = 39;
-const uint8_t pot_by = 35;
-const uint8_t pot_bx = 33;
+uint16_t pot_throttle = 0;
+uint16_t pot_yaw = 0;
+uint16_t pot_pitch = 0;
+uint16_t pot_roll = 0;
 
-uint8_t pot_throttle = 0;
-uint8_t pot_yaw = 0;
-uint8_t pot_pitch = 0;
-uint8_t pot_roll = 0;
+uint8_t potlower = 0;
+uint8_t pothigher = 0;
+uint16_t potfinal = 0;
 
-int on_press = 0;
+void IRAM_ATTR ISR()
+{
+  button1.state = gpio_get_level(button1.PIN);
+  button2.state = gpio_get_level(button2.PIN);
+  button3.state = gpio_get_level(button3.PIN);
+  button4.state = gpio_get_level(button4.PIN);
 
-#define HC12 Serial1
-LiquidCrystal_I2C lcd(0x27, 20, 4); // Display  I2C 20 x 4
-RadioCommunication rc;
-#define EEPROM_SIZE 1
-
-int interface(int);
-void changeParam();
+  button1.since_press = millis();
+  button2.since_press = millis();
+  button3.since_press = millis();
+  button4.since_press = millis();
+}
 
 void setup()
 {
-  //Setting buttons as input
-  pinMode(button1_pin, INPUT_PULLUP);
-  pinMode(button2_pin, INPUT_PULLUP);
-  pinMode(button3_pin, INPUT_PULLUP);
-  pinMode(button4_pin, INPUT_PULLUP);
-  pinMode(hc_set, OUTPUT);
-  digitalWrite(hc_set, HIGH);
-  lcd.init();
-  lcd.backlight();
-  
-  HC12.begin((rc_baudrate[baud_state]));
-  //EEPROM.write(ch_state_adrr, 0);
-  EEPROM.begin(EEPROM_SIZE);
+  gpio_config_t io_conf;
+  io_conf.intr_type = GPIO_INTR_ANYEDGE;
+  io_conf.mode = GPIO_MODE_INPUT;
+  io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+
+  // Set output mode for some pins
+  gpio_config(&io_conf);
+  gpio_set_direction(HC12_TX, GPIO_MODE_OUTPUT);
+  gpio_set_direction(HC12_CMD_MODE, GPIO_MODE_OUTPUT);
+  gpio_set_direction(LED_GREEN, GPIO_MODE_OUTPUT);
+  gpio_set_direction(LED_RED, GPIO_MODE_OUTPUT);
+
+  attachInterrupt(button1.PIN, ISR, RISING);
+  attachInterrupt(button2.PIN, ISR, RISING);
+  attachInterrupt(button3.PIN, ISR, RISING);
+  attachInterrupt(button4.PIN, ISR, RISING);
+  analogReadResolution(12);
+  hc12.begin((rc_baudrate[baud_state]), SERIAL_8N1, HC12_RX, HC12_TX);
+  hc12.begin(4800, SERIAL_8N1, HC12_RX, HC12_TX);
+  flash.begin(FLASH_SIZE);
+  SD.begin(SS, SPI, 80000000, "/sd", 20);
+  Serial.begin(115200);
 }
 
 void loop()
 {
-  current_millis = millis();
+  pot_throttle = analogRead(POT_AY);
+  pot_yaw = analogRead(POT_AX);
+  pot_pitch = analogRead(POT_BY);
+  pot_roll = analogRead(POT_BX);
 
-  pot_throttle = (uint8_t)(analogRead(pot_ay) / 4);
-  pot_yaw = (uint8_t)(analogRead(pot_ax) / 4);
-  pot_pitch = (uint8_t)(analogRead(pot_by) / 4);
-  pot_roll = (uint8_t)(analogRead(pot_bx) / 4);
-
-  button1 = digitalRead(button1_pin);
-  button2 = digitalRead(button2_pin);
-  button3 = digitalRead(button3_pin);
-  button4 = digitalRead(button4_pin);
-
-  if (button3 == 0 && button4 == 0) // switch between menu's
-  {
-    if (on_press < 1) // start waiting for long press
-    {
-      on_press = 1;
-      last_millis = millis();
-    }
-
-    if ((current_millis - last_millis) > long_press) // increment menu after button was pressed long enough
-    {
-      last_millis = millis();
-      menu += 1;
-      lcd.clear();
-      if (menu > max_pages)
-      {
-        menu = 0;
-      }
-      on_press = 0;
-      on_pageload = 0;
-      //Serial.println(menu);
-    }
-  }
-  else
-  {
-    on_press = 0;
-    last_millis = millis();
-  }
+  rc.parseIncomingBytes();
 
   // 10ms
   if (since_int1 > interval1)
@@ -142,10 +114,8 @@ void loop()
   if (since_int2 > interval2)
   {
     since_int2 -= interval2;
-    if (menu == 0)
-    {
-      rc.transmit();
-    }
+
+    rc.sendBytes();
   }
 
   // 3000ms
@@ -158,104 +128,17 @@ void loop()
   if (since_int4 > interval4)
   {
     since_int4 -= interval4;
-    //rc.receive();
-    interface(menu);
-  }
-}
 
-int interface(int page)
-{
-  if (page == 1)
-  {
-    changeParam();
-    lcd.cursor();
-    lcd.setCursor(0, 0);
-    lcd.print("Config: Transmitter");
-    lcd.setCursor(0, 1);
-    lcd.print((String) "Tx: " + (rc_txpower[txpower_state]) + "mw  ");
-    lcd.setCursor(0, 2);
-    lcd.print((String) "Ch: " + channel_state + " ");
-    lcd.setCursor(0, 3);
-    lcd.print((String) "Bd: " + (rc_baudrate[baud_state]) + "b/s      ");
-    lcd.setCursor(4, move_vert);
-  }
-  return 0;
-}
+    potlower = pot_throttle & 0xff; 
+    pothigher = pot_throttle >> 8;
 
-void changeParam()
-{
-  if (move_vert == 1) // tx power parameter
-  {
-    if (button3 == 0 && txpower_state > 0)
-    {
-      delay(200);
-      txpower_state -= 1;
-    }
-    if (button4 == 0 && txpower_state < 7)
-    {
-      delay(200);
-      txpower_state += 1;
-    }
-    if (button2 == 0 && EEPROM.read(tp_state_adrr) != txpower_state)
-    {
-      EEPROM.update(tp_state_adrr, txpower_state);
-      rc.setTxPower((rc_txpower[txpower_state]));
-      lcd.setCursor(4, 1);
-      lcd.print("OK      ");
-      delay(500);
-    }
-  }
-  if (move_vert == 2) // channel parameter
-  {
-    if (button3 == 0 && channel_state > 0)
-    {
-      delay(200);
-      channel_state -= 1;
-    }
-    if (button4 == 0 && channel_state < 110)
-    {
-      delay(200);
-      channel_state += 1;
-    }
-    if (channel_state == 110)
-    {
-      channel_state = 0;
-    }
-
-    if (button2 == 0 && EEPROM.read(ch_state_adrr) != channel_state)
-    {
-      EEPROM.update(ch_state_adrr, channel_state);
-      rc.setChannel(channel_state);
-      lcd.setCursor(4, 2);
-      lcd.print("OK     ");
-      delay(500);
-    }
-  }
-  if (move_vert == 3) // baudrate parameter
-  {
-    if (button3 == 0 && baud_state > 0)
-    {
-      delay(200);
-      baud_state -= 1;
-    }
-    if (button4 == 0 && baud_state < 8)
-    {
-      delay(200);
-      baud_state += 1;
-    }
-    if (baud_state == 8)
-    {
-      baud_state = 0;
-    }
-    baud_state = constrain(baud_state, 0, 8);
-
-    if (button2 == 0 && EEPROM.read(bd_state_adrr) != baud_state)
-    {
-      EEPROM.update(bd_state_adrr, baud_state);
-      rc.setBaudRate((rc_baudrate[baud_state]));
-      lcd.setCursor(4, 3);
-      lcd.print("OK       ");
-      delay(500);
-    }
+    potfinal = pothigher << 8 | potlower;
+  
+    Serial.println(" ");
+    Serial.println((String) "throttle:  " + pot_throttle);
+    Serial.println((String) "yaw:  " + pot_yaw);
+    Serial.println((String) "pitch:  " + pot_pitch);
+    Serial.println((String) "roll:  " + pot_roll);
+    Serial.println(" ");
   }
 }

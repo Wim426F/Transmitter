@@ -7,6 +7,11 @@ const uint32_t rc_baudrate[8] = {1200, 2400, 4800, 9600, 19200, 38400, 57600, 11
 uint8_t send_packet[16];
 uint8_t receive_packet[8];
 
+const uint8_t DATA_BYTES = 255;
+const uint8_t CONFIG_BYTES = 127;
+
+uint16_t local_checksum = 0;
+
 const uint8_t params_amount = 6;
 
 int RadioCommunication::setChannel(int channel)
@@ -21,118 +26,107 @@ int RadioCommunication::setChannel(int channel)
     set_channel = "AT+C0" + (String)channel;
   }
   // Change receiver param first
-  HC12.write((uint8_t)255); // let the drone know that we are sending parameters
-  HC12.write((uint8_t)channel);
+  hc12.write(255); // let the drone know that we are sending parameters
+  hc12.write((uint8_t)channel);
 
-  digitalWrite(hc_set, LOW);
+  gpio_set_level(HC12_CMD_MODE, LOW);
   delay(40);
   // Then change transmitter param
-  HC12.println(set_channel);
-  Serial.begin(9600);
-  delay(100);
+  hc12.println(set_channel);
   Serial.println(set_channel);
-  Serial.end();
   delay(20);
-  digitalWrite(hc_set, HIGH);
+  gpio_set_level(HC12_CMD_MODE, HIGH);
   delay(80);
   return 0;
 }
 int RadioCommunication::setTxPower(int power)
 {
   // Change receiver param first
-  HC12.write((uint8_t)255); // let the drone know that we are sending parameters
-  HC12.write((uint8_t)0);   // skip first parameter
-  HC12.write(txpower_state);
+  hc12.write(255); // let the drone know that we are sending parameters
+  hc12.write(0);   // skip first parameter
+  hc12.write(txpower_state);
 
-  digitalWrite(hc_set, LOW);
+  gpio_set_level(HC12_CMD_MODE, LOW);
   delay(40);
   // Then change transmitter param
-  HC12.println((String) "AT+P" + (txpower_state + 1));
-  Serial.begin(9600);
-  delay(100);
+  hc12.println((String) "AT+P" + (txpower_state + 1));
   Serial.println((String) "AT+P" + (txpower_state + 1));
-  Serial.end();
   delay(20);
-  digitalWrite(hc_set, HIGH);
+  gpio_set_level(HC12_CMD_MODE, HIGH);
   delay(80);
   return 0;
 }
 int RadioCommunication::setBaudRate(int baud)
 {
   // Change receiver param first
-  HC12.write((uint8_t)255); // let the drone know that we are sending parameters
-  HC12.write((uint8_t)0);   // skip two parameters
-  HC12.write((uint8_t)0);
-  HC12.write(baud_state);
+  hc12.write(255); // let the drone know that we are sending parameters
+  hc12.write(0);   // skip two parameters
+  hc12.write(0);
+  hc12.write(baud_state);
 
-  digitalWrite(hc_set, LOW);
+  gpio_set_level(HC12_CMD_MODE, LOW);
   delay(40);
   // Then change transmitter param
-  HC12.println("AT+B" + (String)baud);
+  hc12.println("AT+B" + (String)baud);
   delay(20);
-  Serial.begin(9600);
-  delay(100);
+
   Serial.println("AT+B" + (String)baud);
   Serial.println("AT+B" + (String)(rc_baudrate[baud_state]));
   Serial.println((rc_baudrate[baud_state]));
-  Serial.end();
 
-  digitalWrite(hc_set, HIGH);
+  gpio_set_level(HC12_CMD_MODE, HIGH);
   delay(80);
-
-  HC12.end();
-  HC12.begin(baud);
-  delay(50);
+  hc12.updateBaudRate(baud);
   return 0;
 }
 
-int RadioCommunication::transmit(bool enabled)
+int RadioCommunication::sendBytes()
 {
-  send_packet[0] = button1;
-  send_packet[1] = button2;
-  send_packet[2] = button3;
-  send_packet[3] = button4;
+  send_packet[0] = DATA_BYTES; // sending mode
 
-  send_packet[4] = pot_throttle;
-  send_packet[5] = pot_yaw;
-  send_packet[6] = pot_pitch;
-  send_packet[7] = pot_roll;
+  send_packet[1] = button1.state;
+  send_packet[2] = button2.state;
+  send_packet[3] = button3.state;
+  send_packet[4] = button4.state;
 
-  //checksum (average number of all values)
-  uint16_t local_check = (send_packet[0] + send_packet[1] + send_packet[2] + send_packet[3] + send_packet[4] + send_packet[5] + send_packet[6] + send_packet[7])/8;
-  send_packet[8] = (uint8_t)local_check;
-  Serial.begin(9600);
-  delay(100);
-  Serial.println(local_check);
-  Serial.end();
+  send_packet[5] = pot_throttle & 0xff; // mask the lower 8 bits
+  send_packet[6] = pot_throttle >> 8; // shift higher 8 bits
+  send_packet[7] = pot_yaw & 0xff;
+  send_packet[8] = pot_yaw >> 8;
+  send_packet[9] = pot_pitch & 0xff;
+  send_packet[10] = pot_pitch >> 8;
+  send_packet[11] = pot_roll & 0xff;
+  send_packet[12] = pot_roll >> 8;
 
-  for (int j = 0; j < 9 && enabled; j++)
+  //checksum
+  local_checksum = 0;
+  for (int i = 1; i < 13; i++)
   {
-    HC12.write(send_packet[j]);
+    local_checksum += send_packet[i];
   }
-  HC12.flush();
-  return 0;
+  send_packet[13] = local_checksum & 0xff;
+  send_packet[14] = local_checksum >> 8;
+
+  for (int i = 0; i < 15; i++)
+  {
+    hc12.write(send_packet[i]);
+  }
+  hc12.flush();
+  return 1;
 }
 
-int RadioCommunication::receive()
+int RadioCommunication::parseIncomingBytes()
 {
-  if (HC12.available() > 0)
+  if (hc12.available() > 0)
   {
-    steer_correction = HC12.read();
-
-    for (int i = 0; i < HC12.available(); i++)
+    for (int i = 0; i < hc12.available(); i++)
     {
-      //receive_packet[i] = HC12.read();
-      steer_correction = HC12.read();
-      //digitalWrite(led_red, LOW);
-      //digitalWrite(led_green, HIGH);
+      receive_packet[i] = hc12.read();
     }
     return 1;
   }
   else
   {
-    //digitalWrite(led_green, LOW);
-    //digitalWrite(led_red, HIGH);
     return 0;
   }
 }
