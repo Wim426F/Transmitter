@@ -6,134 +6,166 @@
  */
 #include <rc_comm.h>
 #include <globals.h>
-#include <EEPROM.h>
+#include <SPI.h>
+#include <Encoder.h>
+#include <util/crc16.h>
 
-// interface variables
-uint8_t menu = 0;
-const uint8_t max_pages = 2;
-uint8_t on_pageload = 0;
-bool blink_cursor = true;
-uint8_t move_vert = 1;
-
-const uint8_t ch_state_adrr = 0;
-const uint8_t bd_state_adrr = 1;
-const uint8_t tp_state_adrr = 2;
-uint8_t channel_state = EEPROM.read(ch_state_adrr);
-uint8_t baud_state = EEPROM.read(bd_state_adrr);
-uint8_t txpower_state = EEPROM.read(tp_state_adrr);
-
-uint8_t steer_correction = 0;
+RF24 rf24(7, 8); // NRF24 Radio Transmitter & Receiver
+HC12 radio;
+EEPROMClass eeprom;
 
 elapsedMillis since_int1;
 elapsedMillis since_int2;
 elapsedMillis since_int3;
 elapsedMillis since_int4;
-const long interval1 = 10;
-const long interval2 = 50;
-const long interval3 = 3000;
-const long interval4 = 300;
+uint64_t interval1 = 10;
+const uint64_t interval2 = 50;
+const uint64_t interval3 = 1000;
+const uint64_t interval4 = 100;
 
-unsigned long current_millis = 0;
-unsigned long last_millis = 0;
-const long long_press = 1000;
+Button button1 = {P1, HIGH, 0};
+Button button2 = {P2, HIGH, 0};
+Button button3 = {P3, HIGH, 0};
+Button button4 = {P4, HIGH, 0};
 
-const uint8_t hc_set = 2;
-//const uint8_t led_green = 8;
-//const uint8_t led_red = 7;
+uint16_t pot_throttle = 0;
+uint16_t pot_yaw = 0;
+uint16_t pot_pitch = 0;
+uint16_t pot_roll = 0;
 
-//Buttons
-const uint8_t button1_pin = 27;
-const uint8_t button2_pin = 25;
-const uint8_t button3_pin = 34;
-const uint8_t button4_pin = 14;
+float dr_batt_amps = 0;
+float dr_batt_temp = 0;
+float dr_batt_voltage = 0;
+float dr_altitude = 0;
 
-uint8_t button1 = 0;
-uint8_t button2 = 0;
-uint8_t button3 = 0;
-uint8_t button4 = 0;
+Encoder rot_enc1(ROT_ENC_1A, ROT_ENC_1B);
+Encoder rot_enc2(ROT_ENC_2A, ROT_ENC_2B);
 
-//Joysticks
-const uint8_t pot_ay = 36;
-const uint8_t pot_ax = 39;
-const uint8_t pot_by = 35;
-const uint8_t pot_bx = 33;
-
-uint8_t pot_throttle = 0;
-uint8_t pot_yaw = 0;
-uint8_t pot_pitch = 0;
-uint8_t pot_roll = 0;
-
-int on_press = 0;
-
-#define HC12 Serial1
-LiquidCrystal_I2C lcd(0x27, 20, 4); // Display  I2C 20 x 4
-RadioCommunication rc;
-#define EEPROM_SIZE 1
-
-int interface(int);
-void changeParam();
+uint16_t crc_xmodem(const uint8_t *data, uint16_t len)
+{
+  uint16_t crc = 0;
+  for (uint16_t i = 0; i < len; i++)
+  {
+    crc = crc_xmodem_update(crc, data[i]);
+  }
+  return crc;
+}
 
 void setup()
 {
-  //Setting buttons as input
-  pinMode(button1_pin, INPUT_PULLUP);
-  pinMode(button2_pin, INPUT_PULLUP);
-  pinMode(button3_pin, INPUT_PULLUP);
-  pinMode(button4_pin, INPUT_PULLUP);
-  pinMode(hc_set, OUTPUT);
-  digitalWrite(hc_set, HIGH);
-  lcd.init();
-  lcd.backlight();
-  
-  HC12.begin((rc_baudrate[baud_state]));
-  //EEPROM.write(ch_state_adrr, 0);
-  EEPROM.begin(EEPROM_SIZE);
-  
+  pinMode(HC12_CMD_MODE, OUTPUT);
+  digitalWrite(HC12_CMD_MODE, HIGH); // don't enter command mode
+  Serial.begin(115200);
+  hc12_uart.begin((rc_baudrate[last_baud]), SERIAL_8N1);
+  Serial.println((String) "HC12 started at baud: " + rc_baudrate[last_baud] + "\n");
+
+  //Serial.print("Setting channel: ");
+  //radio.setChannel(1);
+
+  //Serial.print("Setting power: ");
+  //radio.setTxPower(8);
+  //Serial.print("Setting baudrate: ");
+  //radio.setBaudRate(7, true); // 3 = 9600bps
+  /*
+  Serial.print("Setting Mode: "); 
+  radio.setTransmitMode(3);
+  //radio.setAllDefault(); */
+  radio.getVersion();
+  //radio.setAllDefault();
+  analogReadResolution(8);
+  analogReadAveraging(32);
 }
 
 void loop()
 {
-  current_millis = millis();
-
-  pot_throttle = (uint8_t)(analogRead(pot_ay) / 4);
-  pot_yaw = (uint8_t)(analogRead(pot_ax) / 4);
-  pot_pitch = (uint8_t)(analogRead(pot_by) / 4);
-  pot_roll = (uint8_t)(analogRead(pot_bx) / 4);
-
-  button1 = digitalRead(button1_pin);
-  button2 = digitalRead(button2_pin);
-  button3 = digitalRead(button3_pin);
-  button4 = digitalRead(button4_pin);
-
-  if (button3 == 0 && button4 == 0) // switch between menu's
+  if (last_txmode == 1)
   {
-    if (on_press < 1) // start waiting for long press
-    {
-      on_press = 1;
-      last_millis = millis();
-    }
-
-    if ((current_millis - last_millis) > long_press) // increment menu after button was pressed long enough
-    {
-      last_millis = millis();
-      menu += 1;
-      lcd.clear();
-      if (menu > max_pages)
-      {
-        menu = 0;
-      }
-      on_press = 0;
-      on_pageload = 0;
-      //Serial.println(menu);
-    }
+    radio.PACKET_TIMEOUT = 500;
   }
-  else
+  if (last_txmode == 2)
   {
-    on_press = 0;
-    last_millis = millis();
+    radio.PACKET_TIMEOUT = 1500;
+  }
+  if (last_txmode == 3)
+  {
+    radio.PACKET_TIMEOUT = 500;
+  }
+  if (last_txmode == 4)
+  {
+    radio.PACKET_TIMEOUT = 3000;
   }
 
-  // 10ms
+  if (Serial.available() > 0 && radio.waiting_for_response == false)
+  {
+    delay(50);
+    Serial.println("command mode");
+    char param = Serial.read();
+    int i = Serial.parseInt();
+
+    Serial.print((String)param + (String)i);
+    if (param == 'b')
+    {
+      radio.setBaudRate(i, true);
+      delay(1000);
+    }
+
+    if (param == 'c')
+    {
+      radio.setChannel(i, true);
+      delay(1000);
+    }
+
+    if (param == 'm')
+    {
+      radio.setTransmitMode(i, true);
+      delay(1000);
+    }
+
+    if (param == 'p')
+    {
+      radio.setTxPower(i, true);
+      delay(1000);
+    }
+
+    if (param == 'd')
+    {
+      radio.setAllDefault(true);
+      delay(1000);
+    }
+
+    if (param == 's')
+    {
+      Serial.print("HC12 started at: ");
+      EEPROM.write(BD_STATE_ADDR, i);
+      last_baud = EEPROM.read(BD_STATE_ADDR);
+
+      Serial.println(rc_baudrate[last_baud]);
+      hc12_uart.end();
+      hc12_uart.begin(rc_baudrate[last_baud]);
+      delay(100);
+    }
+
+    if (param == 'a')
+    {
+      delay(2000);
+      String param = Serial.readString();
+      digitalWrite(HC12_CMD_MODE, LOW);
+      delay(40);
+      hc12_uart.print(param);
+      delay(100);
+      digitalWrite(HC12_CMD_MODE, HIGH);
+      Serial.println(hc12_uart.readString());
+      delay(1000);
+    }
+  }
+
+  pot_throttle = map(analogRead(POT_AY), 5, 237, 0, 255);
+  pot_yaw = map(analogRead(POT_AX), 5, 240, 0, 255);
+  pot_pitch = map(analogRead(POT_BY), 0, 240, 0, 255);
+  pot_roll = map(analogRead(POT_BX), 10, 250, 0, 255);
+
+  radio.sendData();
+
   if (since_int1 > interval1)
   {
     since_int1 -= interval1;
@@ -143,120 +175,46 @@ void loop()
   if (since_int2 > interval2)
   {
     since_int2 -= interval2;
-    if (menu == 0)
-    {
-      rc.transmit();
-    }
   }
 
-  // 3000ms
+  // 1000ms
   if (since_int3 > interval3)
   {
+    /*
+    Serial.println(" ");
+    Serial.print(pot_throttle);
+    Serial.print(" ");
+    Serial.print(pot_yaw);
+    Serial.print(" ");
+    Serial.print(pot_pitch);
+    Serial.print(" ");
+    Serial.print(pot_roll);
+    Serial.println(" "); */
+    if (radio.is_connected == true)
+    {
+      Serial.print("\nConnected  ");
+    }
+    else
+    {
+      Serial.print("\nDisconnected  ");
+    }
+    Serial.print("volt: ");
+    Serial.print(dr_batt_voltage, 3);
+    Serial.print("  temp: ");
+    Serial.print(dr_batt_temp, 2);
+    Serial.print("  amps: ");
+    Serial.print(dr_batt_amps, 2);
+    Serial.print("  pps: ");
+    Serial.print(radio.packets_per_sec, 1);
+    Serial.print("  resp_time: " + (String)radio.response_time);
+    Serial.println("  pl: " + (String)radio.packets_lost_total);
+
     since_int3 -= interval3;
   }
 
-  // 300ms
+  // 100ms
   if (since_int4 > interval4)
   {
     since_int4 -= interval4;
-    //rc.receive();
-    interface(menu);
-  }
-}
-
-int interface(int page)
-{
-  if (page == 1)
-  {
-    changeParam();
-    lcd.cursor();
-    lcd.setCursor(0, 0);
-    lcd.print("Config: Transmitter");
-    lcd.setCursor(0, 1);
-    lcd.print((String) "Tx: " + (rc_txpower[txpower_state]) + "mw  ");
-    lcd.setCursor(0, 2);
-    lcd.print((String) "Ch: " + channel_state + " ");
-    lcd.setCursor(0, 3);
-    lcd.print((String) "Bd: " + (rc_baudrate[baud_state]) + "b/s      ");
-    lcd.setCursor(4, move_vert);
-  }
-  return 0;
-}
-
-void changeParam()
-{
-  if (move_vert == 1) // tx power parameter
-  {
-    if (button3 == 0 && txpower_state > 0)
-    {
-      delay(200);
-      txpower_state -= 1;
-    }
-    if (button4 == 0 && txpower_state < 7)
-    {
-      delay(200);
-      txpower_state += 1;
-    }
-    if (button2 == 0 && EEPROM.read(tp_state_adrr) != txpower_state)
-    {
-      EEPROM.update(tp_state_adrr, txpower_state);
-      rc.setTxPower((rc_txpower[txpower_state]));
-      lcd.setCursor(4, 1);
-      lcd.print("OK      ");
-      delay(500);
-    }
-  }
-  if (move_vert == 2) // channel parameter
-  {
-    if (button3 == 0 && channel_state > 0)
-    {
-      delay(200);
-      channel_state -= 1;
-    }
-    if (button4 == 0 && channel_state < 110)
-    {
-      delay(200);
-      channel_state += 1;
-    }
-    if (channel_state == 110)
-    {
-      channel_state = 0;
-    }
-
-    if (button2 == 0 && EEPROM.read(ch_state_adrr) != channel_state)
-    {
-      EEPROM.update(ch_state_adrr, channel_state);
-      rc.setChannel(channel_state);
-      lcd.setCursor(4, 2);
-      lcd.print("OK     ");
-      delay(500);
-    }
-  }
-  if (move_vert == 3) // baudrate parameter
-  {
-    if (button3 == 0 && baud_state > 0)
-    {
-      delay(200);
-      baud_state -= 1;
-    }
-    if (button4 == 0 && baud_state < 8)
-    {
-      delay(200);
-      baud_state += 1;
-    }
-    if (baud_state == 8)
-    {
-      baud_state = 0;
-    }
-    baud_state = constrain(baud_state, 0, 8);
-
-    if (button2 == 0 && EEPROM.read(bd_state_adrr) != baud_state)
-    {
-      EEPROM.update(bd_state_adrr, baud_state);
-      rc.setBaudRate((rc_baudrate[baud_state]));
-      lcd.setCursor(4, 3);
-      lcd.print("OK       ");
-      delay(500);
-    }
   }
 }
